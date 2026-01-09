@@ -1,2 +1,3 @@
 third_party/apriltag/build
 build
+test_pose_fusion

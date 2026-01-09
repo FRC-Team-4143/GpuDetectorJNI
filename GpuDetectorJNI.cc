@@ -6,6 +6,7 @@
 #include <cstring>
 
 #include "frc971/orin/971apriltag.h"
+#include "frc971/orin/pose_fusion.h"
 #include "third_party/apriltag/apriltag.h"
 #include "third_party/apriltag/tag36h11.h"
 static JavaVM* jvm = nullptr;
@@ -248,6 +249,145 @@ Java_org_photonvision_jni_GpuDetectorJNI_processimage(JNIEnv * jenv, jobject job
                      << std::endl;
         }
 	return MakeJObject(jenv, detections);
+}
+
+// Global pose fusion instances (up to 10 fusion objects)
+static frc971::apriltag::PoseFusion* pose_fusions[10] = {nullptr};
+static int max_pose_fusions = 0;
+
+JNIEXPORT jlong JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_createPoseFusion(JNIEnv* jenv, jobject jobj) {
+    if (max_pose_fusions >= 10) {
+        std::cout << "createPoseFusion: too many pose fusion objects" << std::endl;
+        return -1;
+    }
+    
+    pose_fusions[max_pose_fusions] = new frc971::apriltag::PoseFusion();
+    std::cout << "Created pose fusion object: " << max_pose_fusions << std::endl;
+    return max_pose_fusions++;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_destroyPoseFusion(JNIEnv* jenv, jobject jobj, jlong handle) {
+    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+        std::cout << "destroyPoseFusion: invalid handle" << std::endl;
+        return;
+    }
+    
+    delete pose_fusions[handle];
+    pose_fusions[handle] = nullptr;
+    std::cout << "Destroyed pose fusion object: " << handle << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_addCameraLocalization(
+    JNIEnv* jenv, jobject jobj, jlong handle, 
+    jint camera_id, jlong timestamp_ns,
+    jdouble x, jdouble y, jdouble z,
+    jdouble qw, jdouble qx, jdouble qy, jdouble qz,
+    jdouble confidence,
+    jdouble offset_x, jdouble offset_y, jdouble offset_z,
+    jdouble offset_qw, jdouble offset_qx, jdouble offset_qy, jdouble offset_qz) {
+    
+    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+        std::cout << "addCameraLocalization: invalid handle" << std::endl;
+        return;
+    }
+    
+    frc971::apriltag::CameraLocalization loc;
+    loc.camera_id = camera_id;
+    loc.timestamp = std::chrono::nanoseconds(timestamp_ns);
+    loc.pose.x = x;
+    loc.pose.y = y;
+    loc.pose.z = z;
+    loc.pose.qw = qw;
+    loc.pose.qx = qx;
+    loc.pose.qy = qy;
+    loc.pose.qz = qz;
+    loc.confidence = confidence;
+    loc.camera_offset.x = offset_x;
+    loc.camera_offset.y = offset_y;
+    loc.camera_offset.z = offset_z;
+    loc.camera_offset.qw = offset_qw;
+    loc.camera_offset.qx = offset_qx;
+    loc.camera_offset.qy = offset_qy;
+    loc.camera_offset.qz = offset_qz;
+    
+    pose_fusions[handle]->AddCameraLocalization(loc);
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_fusePoses(
+    JNIEnv* jenv, jobject jobj, jlong handle, jlong time_window_ns) {
+    
+    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+        std::cout << "fusePoses: invalid handle" << std::endl;
+        return nullptr;
+    }
+    
+    frc971::apriltag::Pose3D fused_pose;
+    bool success = pose_fusions[handle]->FusePoses(
+        fused_pose, std::chrono::nanoseconds(time_window_ns));
+    
+    if (!success) {
+        return nullptr;
+    }
+    
+    // Return array of [x, y, z, qw, qx, qy, qz]
+    jdoubleArray result = jenv->NewDoubleArray(7);
+    if (result == nullptr) {
+        return nullptr;
+    }
+    
+    jdouble pose_data[7] = {
+        fused_pose.x, fused_pose.y, fused_pose.z,
+        fused_pose.qw, fused_pose.qx, fused_pose.qy, fused_pose.qz
+    };
+    
+    jenv->SetDoubleArrayRegion(result, 0, 7, pose_data);
+    
+    std::cout << "Fused pose: [" << fused_pose.x << ", " << fused_pose.y << ", " 
+              << fused_pose.z << "] quat: [" << fused_pose.qw << ", " 
+              << fused_pose.qx << ", " << fused_pose.qy << ", " 
+              << fused_pose.qz << "]" << std::endl;
+    
+    return result;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_clearPoseFusion(JNIEnv* jenv, jobject jobj, jlong handle) {
+    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+        std::cout << "clearPoseFusion: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_fusions[handle]->Clear();
+    std::cout << "Cleared pose fusion buffer: " << handle << std::endl;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_getPoseFusionBufferSize(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+        std::cout << "getPoseFusionBufferSize: invalid handle" << std::endl;
+        return -1;
+    }
+    
+    return static_cast<jint>(pose_fusions[handle]->GetBufferSize());
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_setPoseFusionMaxBufferSize(
+    JNIEnv* jenv, jobject jobj, jlong handle, jint max_size) {
+    
+    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+        std::cout << "setPoseFusionMaxBufferSize: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_fusions[handle]->SetMaxBufferSize(static_cast<size_t>(max_size));
+    std::cout << "Set max buffer size to " << max_size << " for fusion object: " << handle << std::endl;
 }
 
 } // extern "C"
