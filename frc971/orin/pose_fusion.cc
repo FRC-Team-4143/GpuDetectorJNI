@@ -181,8 +181,12 @@ std::vector<double> PoseFusion::CalculateWeights(
     double weight = loc.confidence;
     
     // Add recency factor: more recent measurements get higher weight
-    auto age = (reference_time - loc.timestamp).count();
-    double recency_factor = std::exp(-age / 1e9); // decay over 1 second
+    auto age_ns = (reference_time - loc.timestamp).count();
+    // Ensure age is non-negative (ignore future timestamps)
+    if (age_ns < 0) {
+      age_ns = 0;
+    }
+    double recency_factor = std::exp(-age_ns / 1e9); // decay over 1 second
     
     weight *= recency_factor;
     weights.push_back(weight);

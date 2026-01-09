@@ -253,18 +253,20 @@ Java_org_photonvision_jni_GpuDetectorJNI_processimage(JNIEnv * jenv, jobject job
 
 // Global pose fusion instances (up to 10 fusion objects)
 static frc971::apriltag::PoseFusion* pose_fusions[10] = {nullptr};
-static int max_pose_fusions = 0;
 
 JNIEXPORT jlong JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_createPoseFusion(JNIEnv* jenv, jobject jobj) {
-    if (max_pose_fusions >= 10) {
-        std::cout << "createPoseFusion: too many pose fusion objects" << std::endl;
-        return -1;
+    // Find first available slot
+    for (int i = 0; i < 10; ++i) {
+        if (pose_fusions[i] == nullptr) {
+            pose_fusions[i] = new frc971::apriltag::PoseFusion();
+            std::cout << "Created pose fusion object: " << i << std::endl;
+            return i;
+        }
     }
     
-    pose_fusions[max_pose_fusions] = new frc971::apriltag::PoseFusion();
-    std::cout << "Created pose fusion object: " << max_pose_fusions << std::endl;
-    return max_pose_fusions++;
+    std::cout << "createPoseFusion: too many pose fusion objects" << std::endl;
+    return -1;
 }
 
 JNIEXPORT void JNICALL
