@@ -2,3 +2,4 @@ third_party/apriltag/build
 build
 test_pose_fusion
 test_handle_management
+demo_pose_fusion

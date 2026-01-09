@@ -297,6 +297,13 @@ Java_org_photonvision_jni_GpuDetectorJNI_addCameraLocalization(
         return;
     }
     
+    // Validate confidence is in valid range [0.0, 1.0]
+    if (confidence < 0.0 || confidence > 1.0) {
+        std::cout << "addCameraLocalization: confidence must be between 0.0 and 1.0, got " 
+                  << confidence << std::endl;
+        return;
+    }
+    
     frc971::apriltag::CameraLocalization loc;
     loc.camera_id = camera_id;
     loc.timestamp = std::chrono::nanoseconds(timestamp_ns);
