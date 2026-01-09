@@ -6,6 +6,8 @@
 #include <cstring>
 
 #include "frc971/orin/971apriltag.h"
+#include "frc971/orin/pose_fusion.h"
+#include "frc971/orin/camera_pose_estimator.h"
 #include "third_party/apriltag/apriltag.h"
 #include "third_party/apriltag/tag36h11.h"
 static JavaVM* jvm = nullptr;
@@ -248,6 +250,301 @@ Java_org_photonvision_jni_GpuDetectorJNI_processimage(JNIEnv * jenv, jobject job
                      << std::endl;
         }
 	return MakeJObject(jenv, detections);
+}
+
+// Global pose fusion instances
+static constexpr int MAX_POSE_FUSION_OBJECTS = 10;
+static frc971::apriltag::PoseFusion* pose_fusions[MAX_POSE_FUSION_OBJECTS] = {nullptr};
+
+JNIEXPORT jlong JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_createPoseFusion(JNIEnv* jenv, jobject jobj) {
+    // Find first available slot
+    for (int i = 0; i < MAX_POSE_FUSION_OBJECTS; ++i) {
+        if (pose_fusions[i] == nullptr) {
+            pose_fusions[i] = new frc971::apriltag::PoseFusion();
+            std::cout << "Created pose fusion object: " << i << std::endl;
+            return i;
+        }
+    }
+    
+    std::cout << "createPoseFusion: too many pose fusion objects" << std::endl;
+    return -1;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_destroyPoseFusion(JNIEnv* jenv, jobject jobj, jlong handle) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
+        std::cout << "destroyPoseFusion: invalid handle" << std::endl;
+        return;
+    }
+    
+    delete pose_fusions[handle];
+    pose_fusions[handle] = nullptr;
+    std::cout << "Destroyed pose fusion object: " << handle << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_addCameraLocalization(
+    JNIEnv* jenv, jobject jobj, jlong handle, 
+    jint camera_id, jlong timestamp_ns,
+    jdouble x, jdouble y, jdouble z,
+    jdouble qw, jdouble qx, jdouble qy, jdouble qz,
+    jdouble confidence,
+    jdouble offset_x, jdouble offset_y, jdouble offset_z,
+    jdouble offset_qw, jdouble offset_qx, jdouble offset_qy, jdouble offset_qz) {
+    
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
+        std::cout << "addCameraLocalization: invalid handle" << std::endl;
+        return;
+    }
+    
+    // Validate confidence is in valid range [0.0, 1.0]
+    if (confidence < 0.0 || confidence > 1.0) {
+        std::cout << "addCameraLocalization: confidence must be between 0.0 and 1.0, got " 
+                  << confidence << std::endl;
+        return;
+    }
+    
+    frc971::apriltag::CameraLocalization loc;
+    loc.camera_id = camera_id;
+    loc.timestamp = std::chrono::nanoseconds(timestamp_ns);
+    loc.pose.x = x;
+    loc.pose.y = y;
+    loc.pose.z = z;
+    loc.pose.qw = qw;
+    loc.pose.qx = qx;
+    loc.pose.qy = qy;
+    loc.pose.qz = qz;
+    loc.confidence = confidence;
+    loc.camera_offset.x = offset_x;
+    loc.camera_offset.y = offset_y;
+    loc.camera_offset.z = offset_z;
+    loc.camera_offset.qw = offset_qw;
+    loc.camera_offset.qx = offset_qx;
+    loc.camera_offset.qy = offset_qy;
+    loc.camera_offset.qz = offset_qz;
+    
+    pose_fusions[handle]->AddCameraLocalization(loc);
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_fusePoses(
+    JNIEnv* jenv, jobject jobj, jlong handle, jlong time_window_ns) {
+    
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
+        std::cout << "fusePoses: invalid handle" << std::endl;
+        return nullptr;
+    }
+    
+    frc971::apriltag::Pose3D fused_pose;
+    bool success = pose_fusions[handle]->FusePoses(
+        fused_pose, std::chrono::nanoseconds(time_window_ns));
+    
+    if (!success) {
+        return nullptr;
+    }
+    
+    // Return array of [x, y, z, qw, qx, qy, qz]
+    jdoubleArray result = jenv->NewDoubleArray(7);
+    if (result == nullptr) {
+        return nullptr;
+    }
+    
+    jdouble pose_data[7] = {
+        fused_pose.x, fused_pose.y, fused_pose.z,
+        fused_pose.qw, fused_pose.qx, fused_pose.qy, fused_pose.qz
+    };
+    
+    jenv->SetDoubleArrayRegion(result, 0, 7, pose_data);
+    
+    std::cout << "Fused pose: [" << fused_pose.x << ", " << fused_pose.y << ", " 
+              << fused_pose.z << "] quat: [" << fused_pose.qw << ", " 
+              << fused_pose.qx << ", " << fused_pose.qy << ", " 
+              << fused_pose.qz << "]" << std::endl;
+    
+    return result;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_clearPoseFusion(JNIEnv* jenv, jobject jobj, jlong handle) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
+        std::cout << "clearPoseFusion: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_fusions[handle]->Clear();
+    std::cout << "Cleared pose fusion buffer: " << handle << std::endl;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_getPoseFusionBufferSize(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
+        std::cout << "getPoseFusionBufferSize: invalid handle" << std::endl;
+        return -1;
+    }
+    
+    return static_cast<jint>(pose_fusions[handle]->GetBufferSize());
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_setPoseFusionMaxBufferSize(
+    JNIEnv* jenv, jobject jobj, jlong handle, jint max_size) {
+    
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
+        std::cout << "setPoseFusionMaxBufferSize: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_fusions[handle]->SetMaxBufferSize(static_cast<size_t>(max_size));
+    std::cout << "Set max buffer size to " << max_size << " for fusion object: " << handle << std::endl;
+}
+
+// Global camera pose estimator instances
+static constexpr int MAX_POSE_ESTIMATOR_OBJECTS = 10;
+static frc971::apriltag::CameraPoseEstimator* pose_estimators[MAX_POSE_ESTIMATOR_OBJECTS] = {nullptr};
+
+JNIEXPORT jlong JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_createCameraPoseEstimator(
+    JNIEnv* jenv, jobject jobj,
+    jdouble fx, jdouble cx, jdouble fy, jdouble cy,
+    jdouble k1, jdouble k2, jdouble p1, jdouble p2, jdouble k3) {
+    
+    // Find first available slot
+    for (int i = 0; i < MAX_POSE_ESTIMATOR_OBJECTS; ++i) {
+        if (pose_estimators[i] == nullptr) {
+            frc971::apriltag::CameraMatrix camera_matrix{fx, cx, fy, cy};
+            frc971::apriltag::DistCoeffs dist_coeffs{k1, k2, p1, p2, k3};
+            pose_estimators[i] = new frc971::apriltag::CameraPoseEstimator(camera_matrix, dist_coeffs);
+            std::cout << "Created camera pose estimator: " << i << std::endl;
+            return i;
+        }
+    }
+    
+    std::cout << "createCameraPoseEstimator: too many estimator objects" << std::endl;
+    return -1;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_destroyCameraPoseEstimator(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "destroyCameraPoseEstimator: invalid handle" << std::endl;
+        return;
+    }
+    
+    delete pose_estimators[handle];
+    pose_estimators[handle] = nullptr;
+    std::cout << "Destroyed camera pose estimator: " << handle << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_addTagToMap(
+    JNIEnv* jenv, jobject jobj, jlong handle,
+    jint tag_id, jdouble x, jdouble y, jdouble z,
+    jdouble qw, jdouble qx, jdouble qy, jdouble qz,
+    jdouble size) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "addTagToMap: invalid handle" << std::endl;
+        return;
+    }
+    
+    frc971::apriltag::TagPose tag(tag_id, x, y, z, qw, qx, qy, qz, size);
+    pose_estimators[handle]->AddTagToMap(tag);
+    std::cout << "Added tag " << tag_id << " to map at position [" 
+              << x << ", " << y << ", " << z << "]" << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_removeTagFromMap(
+    JNIEnv* jenv, jobject jobj, jlong handle, jint tag_id) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "removeTagFromMap: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_estimators[handle]->RemoveTagFromMap(tag_id);
+    std::cout << "Removed tag " << tag_id << " from map" << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_clearTagMap(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "clearTagMap: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_estimators[handle]->ClearTagMap();
+    std::cout << "Cleared tag map" << std::endl;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_getTagMapSize(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "getTagMapSize: invalid handle" << std::endl;
+        return -1;
+    }
+    
+    return static_cast<jint>(pose_estimators[handle]->GetTagMapSize());
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_estimateCameraPose(
+    JNIEnv* jenv, jobject jobj, jlong estimator_handle, jlong detector_handle) {
+    
+    if (estimator_handle < 0 || estimator_handle >= MAX_POSE_ESTIMATOR_OBJECTS || 
+        !pose_estimators[estimator_handle]) {
+        std::cout << "estimateCameraPose: invalid estimator handle" << std::endl;
+        return nullptr;
+    }
+    
+    if (detector_handle < 0 || detector_handle >= 10 || !detectors[detector_handle].gpu_detector_) {
+        std::cout << "estimateCameraPose: invalid detector handle" << std::endl;
+        return nullptr;
+    }
+    
+    const zarray_t* detections = detectors[detector_handle].gpu_detector_->Detections();
+    if (!detections || zarray_size(detections) == 0) {
+        std::cout << "estimateCameraPose: no detections available" << std::endl;
+        return nullptr;
+    }
+    
+    frc971::apriltag::CameraPose camera_pose;
+    bool success = pose_estimators[estimator_handle]->EstimateCameraPose(detections, camera_pose);
+    
+    if (!success) {
+        std::cout << "estimateCameraPose: PnP failed" << std::endl;
+        return nullptr;
+    }
+    
+    // Return array of [x, y, z, qw, qx, qy, qz, error]
+    jdoubleArray result = jenv->NewDoubleArray(8);
+    if (result == nullptr) {
+        return nullptr;
+    }
+    
+    jdouble pose_data[8] = {
+        camera_pose.x, camera_pose.y, camera_pose.z,
+        camera_pose.qw, camera_pose.qx, camera_pose.qy, camera_pose.qz,
+        camera_pose.error
+    };
+    
+    jenv->SetDoubleArrayRegion(result, 0, 8, pose_data);
+    
+    std::cout << "Camera pose: [" << camera_pose.x << ", " << camera_pose.y << ", " 
+              << camera_pose.z << "] quat: [" << camera_pose.qw << ", " 
+              << camera_pose.qx << ", " << camera_pose.qy << ", " 
+              << camera_pose.qz << "] error: " << camera_pose.error << std::endl;
+    
+    return result;
 }
 
 } // extern "C"
