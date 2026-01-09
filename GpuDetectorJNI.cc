@@ -251,13 +251,14 @@ Java_org_photonvision_jni_GpuDetectorJNI_processimage(JNIEnv * jenv, jobject job
 	return MakeJObject(jenv, detections);
 }
 
-// Global pose fusion instances (up to 10 fusion objects)
-static frc971::apriltag::PoseFusion* pose_fusions[10] = {nullptr};
+// Global pose fusion instances
+static constexpr int MAX_POSE_FUSION_OBJECTS = 10;
+static frc971::apriltag::PoseFusion* pose_fusions[MAX_POSE_FUSION_OBJECTS] = {nullptr};
 
 JNIEXPORT jlong JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_createPoseFusion(JNIEnv* jenv, jobject jobj) {
     // Find first available slot
-    for (int i = 0; i < 10; ++i) {
+    for (int i = 0; i < MAX_POSE_FUSION_OBJECTS; ++i) {
         if (pose_fusions[i] == nullptr) {
             pose_fusions[i] = new frc971::apriltag::PoseFusion();
             std::cout << "Created pose fusion object: " << i << std::endl;
@@ -271,7 +272,7 @@ Java_org_photonvision_jni_GpuDetectorJNI_createPoseFusion(JNIEnv* jenv, jobject 
 
 JNIEXPORT void JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_destroyPoseFusion(JNIEnv* jenv, jobject jobj, jlong handle) {
-    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
         std::cout << "destroyPoseFusion: invalid handle" << std::endl;
         return;
     }
@@ -291,7 +292,7 @@ Java_org_photonvision_jni_GpuDetectorJNI_addCameraLocalization(
     jdouble offset_x, jdouble offset_y, jdouble offset_z,
     jdouble offset_qw, jdouble offset_qx, jdouble offset_qy, jdouble offset_qz) {
     
-    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
         std::cout << "addCameraLocalization: invalid handle" << std::endl;
         return;
     }
@@ -322,7 +323,7 @@ JNIEXPORT jdoubleArray JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_fusePoses(
     JNIEnv* jenv, jobject jobj, jlong handle, jlong time_window_ns) {
     
-    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
         std::cout << "fusePoses: invalid handle" << std::endl;
         return nullptr;
     }
@@ -358,7 +359,7 @@ Java_org_photonvision_jni_GpuDetectorJNI_fusePoses(
 
 JNIEXPORT void JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_clearPoseFusion(JNIEnv* jenv, jobject jobj, jlong handle) {
-    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
         std::cout << "clearPoseFusion: invalid handle" << std::endl;
         return;
     }
@@ -371,7 +372,7 @@ JNIEXPORT jint JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_getPoseFusionBufferSize(
     JNIEnv* jenv, jobject jobj, jlong handle) {
     
-    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
         std::cout << "getPoseFusionBufferSize: invalid handle" << std::endl;
         return -1;
     }
@@ -383,7 +384,7 @@ JNIEXPORT void JNICALL
 Java_org_photonvision_jni_GpuDetectorJNI_setPoseFusionMaxBufferSize(
     JNIEnv* jenv, jobject jobj, jlong handle, jint max_size) {
     
-    if (handle < 0 || handle >= 10 || !pose_fusions[handle]) {
+    if (handle < 0 || handle >= MAX_POSE_FUSION_OBJECTS || !pose_fusions[handle]) {
         std::cout << "setPoseFusionMaxBufferSize: invalid handle" << std::endl;
         return;
     }
