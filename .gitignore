@@ -3,3 +3,4 @@ build
 test_pose_fusion
 test_handle_management
 demo_pose_fusion
+test_camera_pose_estimator

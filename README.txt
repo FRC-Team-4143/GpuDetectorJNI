@@ -3,12 +3,18 @@ This is 971's cuda apriltag library wrapped for photonvision.
 Features:
 - CUDA-accelerated AprilTag detection
 - Multi-camera pose fusion for enhanced localization
+- Camera pose estimation using Perspective-n-Point (PnP) algorithm
 - JNI interface for Java integration
 
 Multi-Camera Pose Fusion:
 This library includes a robust multi-camera pose fusion system that combines
 AprilTag detections from multiple cameras into a unified pose estimation.
 See POSE_FUSION_API.md for detailed API documentation and usage examples.
+
+Camera Pose Estimation:
+Estimates camera position and orientation in 3D space using detected AprilTags
+and their known world positions. Uses OpenCV's PnP solver with lens distortion
+correction. See CAMERA_POSE_ESTIMATION_API.md for detailed documentation.
 
 to compile on a fresh jetpack 6.2 install:
 sudo apt install openjdk-17-jdk

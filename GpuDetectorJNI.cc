@@ -7,6 +7,7 @@
 
 #include "frc971/orin/971apriltag.h"
 #include "frc971/orin/pose_fusion.h"
+#include "frc971/orin/camera_pose_estimator.h"
 #include "third_party/apriltag/apriltag.h"
 #include "third_party/apriltag/tag36h11.h"
 static JavaVM* jvm = nullptr;
@@ -398,6 +399,152 @@ Java_org_photonvision_jni_GpuDetectorJNI_setPoseFusionMaxBufferSize(
     
     pose_fusions[handle]->SetMaxBufferSize(static_cast<size_t>(max_size));
     std::cout << "Set max buffer size to " << max_size << " for fusion object: " << handle << std::endl;
+}
+
+// Global camera pose estimator instances
+static constexpr int MAX_POSE_ESTIMATOR_OBJECTS = 10;
+static frc971::apriltag::CameraPoseEstimator* pose_estimators[MAX_POSE_ESTIMATOR_OBJECTS] = {nullptr};
+
+JNIEXPORT jlong JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_createCameraPoseEstimator(
+    JNIEnv* jenv, jobject jobj,
+    jdouble fx, jdouble cx, jdouble fy, jdouble cy,
+    jdouble k1, jdouble k2, jdouble p1, jdouble p2, jdouble k3) {
+    
+    // Find first available slot
+    for (int i = 0; i < MAX_POSE_ESTIMATOR_OBJECTS; ++i) {
+        if (pose_estimators[i] == nullptr) {
+            frc971::apriltag::CameraMatrix camera_matrix{fx, cx, fy, cy};
+            frc971::apriltag::DistCoeffs dist_coeffs{k1, k2, p1, p2, k3};
+            pose_estimators[i] = new frc971::apriltag::CameraPoseEstimator(camera_matrix, dist_coeffs);
+            std::cout << "Created camera pose estimator: " << i << std::endl;
+            return i;
+        }
+    }
+    
+    std::cout << "createCameraPoseEstimator: too many estimator objects" << std::endl;
+    return -1;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_destroyCameraPoseEstimator(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "destroyCameraPoseEstimator: invalid handle" << std::endl;
+        return;
+    }
+    
+    delete pose_estimators[handle];
+    pose_estimators[handle] = nullptr;
+    std::cout << "Destroyed camera pose estimator: " << handle << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_addTagToMap(
+    JNIEnv* jenv, jobject jobj, jlong handle,
+    jint tag_id, jdouble x, jdouble y, jdouble z,
+    jdouble qw, jdouble qx, jdouble qy, jdouble qz,
+    jdouble size) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "addTagToMap: invalid handle" << std::endl;
+        return;
+    }
+    
+    frc971::apriltag::TagPose tag(tag_id, x, y, z, qw, qx, qy, qz, size);
+    pose_estimators[handle]->AddTagToMap(tag);
+    std::cout << "Added tag " << tag_id << " to map at position [" 
+              << x << ", " << y << ", " << z << "]" << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_removeTagFromMap(
+    JNIEnv* jenv, jobject jobj, jlong handle, jint tag_id) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "removeTagFromMap: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_estimators[handle]->RemoveTagFromMap(tag_id);
+    std::cout << "Removed tag " << tag_id << " from map" << std::endl;
+}
+
+JNIEXPORT void JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_clearTagMap(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "clearTagMap: invalid handle" << std::endl;
+        return;
+    }
+    
+    pose_estimators[handle]->ClearTagMap();
+    std::cout << "Cleared tag map" << std::endl;
+}
+
+JNIEXPORT jint JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_getTagMapSize(
+    JNIEnv* jenv, jobject jobj, jlong handle) {
+    
+    if (handle < 0 || handle >= MAX_POSE_ESTIMATOR_OBJECTS || !pose_estimators[handle]) {
+        std::cout << "getTagMapSize: invalid handle" << std::endl;
+        return -1;
+    }
+    
+    return static_cast<jint>(pose_estimators[handle]->GetTagMapSize());
+}
+
+JNIEXPORT jdoubleArray JNICALL
+Java_org_photonvision_jni_GpuDetectorJNI_estimateCameraPose(
+    JNIEnv* jenv, jobject jobj, jlong estimator_handle, jlong detector_handle) {
+    
+    if (estimator_handle < 0 || estimator_handle >= MAX_POSE_ESTIMATOR_OBJECTS || 
+        !pose_estimators[estimator_handle]) {
+        std::cout << "estimateCameraPose: invalid estimator handle" << std::endl;
+        return nullptr;
+    }
+    
+    if (detector_handle < 0 || detector_handle >= 10 || !detectors[detector_handle].gpu_detector_) {
+        std::cout << "estimateCameraPose: invalid detector handle" << std::endl;
+        return nullptr;
+    }
+    
+    const zarray_t* detections = detectors[detector_handle].gpu_detector_->Detections();
+    if (!detections || zarray_size(detections) == 0) {
+        std::cout << "estimateCameraPose: no detections available" << std::endl;
+        return nullptr;
+    }
+    
+    frc971::apriltag::CameraPose camera_pose;
+    bool success = pose_estimators[estimator_handle]->EstimateCameraPose(detections, camera_pose);
+    
+    if (!success) {
+        std::cout << "estimateCameraPose: PnP failed" << std::endl;
+        return nullptr;
+    }
+    
+    // Return array of [x, y, z, qw, qx, qy, qz, error]
+    jdoubleArray result = jenv->NewDoubleArray(8);
+    if (result == nullptr) {
+        return nullptr;
+    }
+    
+    jdouble pose_data[8] = {
+        camera_pose.x, camera_pose.y, camera_pose.z,
+        camera_pose.qw, camera_pose.qx, camera_pose.qy, camera_pose.qz,
+        camera_pose.error
+    };
+    
+    jenv->SetDoubleArrayRegion(result, 0, 8, pose_data);
+    
+    std::cout << "Camera pose: [" << camera_pose.x << ", " << camera_pose.y << ", " 
+              << camera_pose.z << "] quat: [" << camera_pose.qw << ", " 
+              << camera_pose.qx << ", " << camera_pose.qy << ", " 
+              << camera_pose.qz << "] error: " << camera_pose.error << std::endl;
+    
+    return result;
 }
 
 } // extern "C"

@@ -37,9 +37,11 @@ add_library( 971apriltag SHARED
         frc971/orin/threshold.cu
         frc971/orin/cuda.cc
         frc971/orin/pose_fusion.cc
+        frc971/orin/camera_pose_estimator.cc
 	GpuDetectorJNI.cc
 	)
 target_link_libraries(971apriltag PRIVATE ${JNI_LIBRARIES}
 	${CMAKE_SOURCE_DIR}/third_party/apriltag/build/libapriltag.a wpiutil
+	${OpenCV_LIBS}
 	)
 
